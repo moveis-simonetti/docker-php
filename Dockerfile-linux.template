@@ -150,7 +150,8 @@ RUN { \
 # Enable linker optimization (this sorts the hash buckets to improve cache locality, and is non-default)
 # https://github.com/docker-library/php/issues/272
 # -D_LARGEFILE_SOURCE and -D_FILE_OFFSET_BITS=64 (https://www.php.net/manual/en/intro.filesystem.php)
-ENV PHP_CFLAGS="-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64"
+# -DOPENSSL_SUPPRESS_DEPRECATED -DRSA_SSLV23_PADDING=2 (https://github.com/php/php-src/commit/5f90134bb69a345c7edb5013e6461e84caa32dbc?diff=unified#commitcomment-93811395)
+ENV PHP_CFLAGS="-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -DOPENSSL_SUPPRESS_DEPRECATED -DRSA_SSLV23_PADDING=2"
 ENV PHP_CPPFLAGS="$PHP_CFLAGS"
 ENV PHP_LDFLAGS="-Wl,-O1 -pie"
 
@@ -181,6 +182,13 @@ ENV GPG_KEYS {{
 			"5289 95BF EDFB A719 1D46  839E F9BA 0ADA 31CB D89E", # krakjoe
 			"39B6 4134 3D8C 104B 2B14  6DC3 F9C3 9DC0 B969 8544", # ramsey
 			"F1F6 9223 8FBC 1666 E5A5  CCD4 199F 9DFE F6FF BAFD"  # patrickallaert
+		],
+
+		"7.4": [
+			# https://wiki.php.net/todo/php74#release_managers
+			# https://www.php.net/gpg-keys.php#gpg-7.4
+			"4267 0A7F E4D0 441C 8E46  3234 9E4F DC07 4A4E F02D", # petk
+			"5A52 8807 81F7 5560 8BF8  15FC 910D EB46 F53E A312"  # derick
 		],
 	}[env.version | rtrimstr("-rc")] // error("missing GPG keys for " + env.version)
 	| map(gsub(" "; ""))

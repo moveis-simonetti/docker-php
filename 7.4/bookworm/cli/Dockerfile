@@ -48,66 +48,6 @@ RUN set -eux; \
 	chown www-data:www-data /var/www/html; \
 	chmod 1777 /var/www/html
 
-ENV APACHE_CONFDIR /etc/apache2
-ENV APACHE_ENVVARS $APACHE_CONFDIR/envvars
-
-RUN set -eux; \
-	apt-get update; \
-	apt-get install -y --no-install-recommends apache2; \
-	rm -rf /var/lib/apt/lists/*; \
-	\
-# generically convert lines like
-#   export APACHE_RUN_USER=www-data
-# into
-#   : ${APACHE_RUN_USER:=www-data}
-#   export APACHE_RUN_USER
-# so that they can be overridden at runtime ("-e APACHE_RUN_USER=...")
-	sed -ri 's/^export ([^=]+)=(.*)$/: ${\1:=\2}\nexport \1/' "$APACHE_ENVVARS"; \
-	\
-# setup directories and permissions
-	. "$APACHE_ENVVARS"; \
-	for dir in \
-		"$APACHE_LOCK_DIR" \
-		"$APACHE_RUN_DIR" \
-		"$APACHE_LOG_DIR" \
-# https://salsa.debian.org/apache-team/apache2/-/commit/b97ca8714890ead1ba6c095699dde752e8433205
-		"$APACHE_RUN_DIR/socks" \
-	; do \
-		rm -rvf "$dir"; \
-		mkdir -p "$dir"; \
-		chown "$APACHE_RUN_USER:$APACHE_RUN_GROUP" "$dir"; \
-# allow running as an arbitrary user (https://github.com/docker-library/php/issues/743)
-		chmod 1777 "$dir"; \
-	done; \
-	\
-# delete the "index.html" that installing Apache drops in here
-	rm -rvf /var/www/html/*; \
-	\
-# logs should go to stdout / stderr
-	ln -sfT /dev/stderr "$APACHE_LOG_DIR/error.log"; \
-	ln -sfT /dev/stdout "$APACHE_LOG_DIR/access.log"; \
-	ln -sfT /dev/stdout "$APACHE_LOG_DIR/other_vhosts_access.log"; \
-	chown -R --no-dereference "$APACHE_RUN_USER:$APACHE_RUN_GROUP" "$APACHE_LOG_DIR"
-
-# Apache + PHP requires preforking Apache for best results
-RUN a2dismod mpm_event && a2enmod mpm_prefork
-
-# PHP files should be handled by PHP, and should be preferred over any other file type
-RUN { \
-		echo '<FilesMatch \.php$>'; \
-		echo '\tSetHandler application/x-httpd-php'; \
-		echo '</FilesMatch>'; \
-		echo; \
-		echo 'DirectoryIndex disabled'; \
-		echo 'DirectoryIndex index.php index.html'; \
-		echo; \
-		echo '<Directory /var/www/>'; \
-		echo '\tOptions -Indexes'; \
-		echo '\tAllowOverride All'; \
-		echo '</Directory>'; \
-	} | tee "$APACHE_CONFDIR/conf-available/docker-php.conf" \
-	&& a2enconf docker-php
-
 # Apply stack smash protection to functions using local buffers and alloca()
 # Make PHP's main executable position-independent (improves ASLR security mechanism, and has no performance impact on x86_64)
 # Enable optimization (-O2)
@@ -119,11 +59,11 @@ ENV PHP_CFLAGS="-fstack-protector-strong -fpic -fpie -O2 -D_LARGEFILE_SOURCE -D_
 ENV PHP_CPPFLAGS="$PHP_CFLAGS"
 ENV PHP_LDFLAGS="-Wl,-O1 -pie"
 
-ENV GPG_KEYS 1198C0117593497A5EC5C199286AF1F9897469DC C28D937575603EB4ABB725861C0779DC5C0A9DE4 AFD8691FDAEDF03BDF6E460563F15A9B715376CA
+ENV GPG_KEYS 42670A7FE4D0441C8E4632349E4FDC074A4EF02D 5A52880781F755608BF815FC910DEB46F53EA312
 
-ENV PHP_VERSION 8.3.9
-ENV PHP_URL="https://www.php.net/distributions/php-8.3.9.tar.xz" PHP_ASC_URL="https://www.php.net/distributions/php-8.3.9.tar.xz.asc"
-ENV PHP_SHA256="bf4d7b8ea60a356064f88485278bd6f941a230ec16f0fc401574ce1445ad6c77"
+ENV PHP_VERSION 7.4.33
+ENV PHP_URL="https://www.php.net/distributions/php-7.4.33.tar.xz" PHP_ASC_URL="https://www.php.net/distributions/php-7.4.33.tar.xz.asc"
+ENV PHP_SHA256="924846abf93bc613815c55dd3f5809377813ac62a9ec4eb3778675b82a27b927"
 
 RUN set -eux; \
 	\
@@ -163,7 +103,6 @@ RUN set -eux; \
 	savedAptMark="$(apt-mark showmanual)"; \
 	apt-get update; \
 	apt-get install -y --no-install-recommends \
-		apache2-dev \
 		libargon2-dev \
 		libcurl4-openssl-dev \
 		libonig-dev \
@@ -223,17 +162,17 @@ RUN set -eux; \
 		--with-readline \
 		--with-zlib \
 		\
-# https://github.com/bwoebi/phpdbg-docs/issues/1#issuecomment-163872806 ("phpdbg is primarily a CLI debugger, and is not suitable for debugging an fpm stack.")
-		--disable-phpdbg \
+# https://github.com/docker-library/php/pull/1259
+		--enable-phpdbg \
+		--enable-phpdbg-readline \
 		\
 # in PHP 7.4+, the pecl/pear installers are officially deprecated (requiring an explicit "--with-pear")
 		--with-pear \
 		\
 		--with-libdir="lib/$debMultiarch" \
 		\
-		--disable-cgi \
-		\
-		--with-apxs2 \
+# https://github.com/docker-library/php/pull/939#issuecomment-730501748
+		--enable-embed \
 	; \
 	make -j "$(nproc)"; \
 	find -type f -name '*.a' -delete; \
@@ -281,11 +220,4 @@ COPY docker-php-ext-* docker-php-entrypoint /usr/local/bin/
 RUN docker-php-ext-enable sodium
 
 ENTRYPOINT ["docker-php-entrypoint"]
-# https://httpd.apache.org/docs/2.4/stopping.html#gracefulstop
-STOPSIGNAL SIGWINCH
-
-COPY apache2-foreground /usr/local/bin/
-WORKDIR /var/www/html
-
-EXPOSE 80
-CMD ["apache2-foreground"]
+CMD ["php", "-a"]
